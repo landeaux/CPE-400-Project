@@ -100,6 +100,7 @@ int main (int argc, char *argv[])
   double interval = 1.0; // seconds
   bool verbose = false;
   bool tracing = false;
+  uint32_t distance = 5;
 
   CommandLine cmd;
   cmd.AddValue ("id", "Experiment ID, to customize output file [0]", id);
@@ -112,6 +113,7 @@ int main (int argc, char *argv[])
   cmd.AddValue ("numNodes", "number of nodes", numNodes);
   cmd.AddValue ("sinkNode", "Receiver node number", sinkNode);
   cmd.AddValue ("sourceNode", "Sender node number", sourceNode);
+  cmd.AddValue ("distance", "Distance between nodes", distance);
   cmd.Parse (argc, argv);
   // Convert to time object
   Time interPacketInterval = Seconds (interval);
@@ -155,13 +157,13 @@ int main (int argc, char *argv[])
   mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
                                  "MinX", DoubleValue (10.0),
                                  "MinY", DoubleValue (10.0),
-                                 "DeltaX", DoubleValue (5.0),
-                                 "DeltaY", DoubleValue (5.0),
+                                 "DeltaX", DoubleValue (distance),
+                                 "DeltaY", DoubleValue (distance),
                                  "GridWidth", UintegerValue (5),
                                  "LayoutType", StringValue ("RowFirst"));
 
   mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
-                             "Bounds", RectangleValue (Rectangle (0, 50, 0, 50)));
+                             "Bounds", RectangleValue (Rectangle (0, distance * 2 * 5, 0, distance * std::ceil(numNodes / 5) * 2)));
   mobility.Install (nodes);
 
   // Enable OLSR
