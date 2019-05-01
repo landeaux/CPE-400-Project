@@ -213,7 +213,7 @@ MeshTest::CreateNodes ()
   double xMin = 0;
   double xMax = m_step * 2 * m_xSize;
   double yMin = 0;
-  double yMax = m_step * 2 * std::max((int)m_ySize, 1);
+  double yMax = m_step * 2 * (double)m_ySize;
   Rectangle bounds = Rectangle (xMin, xMax, yMin, yMax);
   mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
                              "Bounds", RectangleValue (bounds),
@@ -295,7 +295,7 @@ MeshTest::Report ()
   for (NetDeviceContainer::Iterator i = meshDevices.Begin (); i != meshDevices.End (); ++i, ++n)
     {
       std::ostringstream os;
-      os << "mp-report-" << n << ".xml";
+      os << "mp-report-" << std::to_string(m_id) << "-" << n << ".xml";
       std::cerr << "Printing mesh point device #" << n << " diagnostics to " << os.str () << "\n";
       std::ofstream of;
       of.open (os.str ().c_str ());
