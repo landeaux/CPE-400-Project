@@ -25,7 +25,7 @@
  * When topology is created, UDP ping is installed to opposite corners
  * by diagonals. packet size of the UDP ping and interval between two
  * successive packets is configurable.
- * 
+ *
  *  m_xSize * step
  *  |<--------->|
  *   step
@@ -129,6 +129,8 @@ private:
   Ipv4InterfaceContainer interfaces;
   /// MeshHelper. Report is not static methods
   MeshHelper mesh;
+
+  MobilityHelper mobility;
 private:
   /// Create nodes and setup their mobility
   void CreateNodes ();
@@ -138,6 +140,8 @@ private:
   void InstallApplication ();
   /// Print mesh devices diagnostics
   void Report ();
+
+  void checkLocation();
 };
 MeshTest::MeshTest () :
   m_id (0),
@@ -188,7 +192,7 @@ MeshTest::Configure (int argc, char *argv[])
 }
 void
 MeshTest::CreateNodes ()
-{ 
+{
   /*
    * Create m_ySize*m_xSize stations to form a grid topology
    */
@@ -228,24 +232,43 @@ MeshTest::CreateNodes ()
   meshDevices = mesh.Install (wifiPhy, nodes);
 
   // Setup mobility - random walk grid topology
-  MobilityHelper mobility;
+
+  // mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
+  //                                "MinX", DoubleValue (m_step),
+  //                                "MinY", DoubleValue (m_step),
+  //                                "DeltaX", DoubleValue (m_step),
+  //                                "DeltaY", DoubleValue (m_step),
+  //                                "GridWidth", UintegerValue (m_xSize),
+  //                                "LayoutType", StringValue ("RowFirst"));
+  // std::string speed("ns3::ConstantRandomVariable[Constant=" + std::to_string(m_step) + "]");
+  // double xMin = 0;
+  // double xMax = m_step * 2 * m_xSize;
+  // double yMin = 0;
+  // double yMax = m_step * 2 * (double)m_ySize;
+  // Rectangle bounds = Rectangle (xMin, xMax, yMin, yMax);
+  // mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
+  //                            "Bounds", RectangleValue (bounds),
+  //                            "Speed", StringValue (speed));
+
   mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
-                                 "MinX", DoubleValue (m_step),
-                                 "MinY", DoubleValue (m_step),
+                                 "MinX", DoubleValue (0),
+                                 "MinY", DoubleValue (0),
                                  "DeltaX", DoubleValue (m_step),
                                  "DeltaY", DoubleValue (m_step),
-                                 "GridWidth", UintegerValue (m_xSize),
+                                 "GridWidth", UintegerValue (m_step),
                                  "LayoutType", StringValue ("RowFirst"));
-  std::string speed("ns3::ConstantRandomVariable[Constant=" + std::to_string(m_step) + "]");
-  double xMin = 0;
-  double xMax = m_step * 2 * m_xSize;
-  double yMin = 0;
-  double yMax = m_step * 2 * (double)m_ySize;
-  Rectangle bounds = Rectangle (xMin, xMax, yMin, yMax);
-  mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
-                             "Bounds", RectangleValue (bounds),
-                             "Speed", StringValue (speed));
+
+  mobility.SetMobilityModel ("ns3::ConstantVelocityMobilityModel");
+
   mobility.Install (nodes);
+
+  Ptr<ConstantVelocityMobilityModel> bee;
+  for(int n = 0; n < m_numNodes; n++){
+    bee = nodes.Get(n)->GetObject<ConstantVelocityMobilityModel>();
+    Vector position = bee->GetPosition();
+    bee->SetVelocity(Vector((double)(position.x*(m_xSize/m_step)),(double)(position.y*(m_ySize/m_step)), 0));
+    // std::cout << bee->GetVelocity() << std::endl;
+  }
 
   if (m_pcap)
     wifiPhy.EnablePcapAll (std::string ("mp-"));
@@ -285,12 +308,14 @@ MeshTest::Run ()
   CreateNodes ();
   InstallInternetStack ();
   InstallApplication ();
+  //Allow drones to deploy
+  Simulator::Schedule(Seconds (m_totalTime * (m_step/(m_step*m_xSize))), &MeshTest::checkLocation, this);
   Simulator::Schedule (Seconds (m_totalTime), &MeshTest::Report, this);
   Simulator::Stop (Seconds (m_totalTime));
 
   std::string animMeshFilename = "mobile-adhoc-network-anim-mesh_" + std::to_string(m_id) + ".xml";
   AnimationInterface anim (animMeshFilename);
-  
+
   // Update Node Color for all nodes
   for (uint32_t i = 0; i < nodes.GetN (); i++)
     {
@@ -321,7 +346,7 @@ MeshTest::Run ()
   std::map<FlowId, FlowMonitor::FlowStats> stats = monitor->GetFlowStats ();
 
   uint32_t txPacketSum = 0;   // 15
-  uint32_t rxPacketSum = 0;   // 10 
+  uint32_t rxPacketSum = 0;   // 10
   uint32_t dropPacketSum = 0; // 15
   uint32_t lostPacketSum = 0; // 15
   uint32_t rxBytesSum = 0;    // 15
@@ -358,7 +383,7 @@ MeshTest::Run ()
       ofs.open ("results.dat");
       ofs << "experimentID numNodes nodeID txPackets rxPackets lostPackets dropPackets delay rxBytes" << std::endl;
     }
-  else 
+  else
     {
       ofs.open ("results.dat", std::ofstream::app);
     }
@@ -403,7 +428,7 @@ MeshTest::Run ()
       ofs.open ("averages.dat");
       ofs << "experimentID numNodes nodeID txPackets rxPackets lostPackets dropPackets delay rxBytes" << std::endl;
     }
-  else 
+  else
     {
       ofs.open ("averages.dat", std::ofstream::app);
     }
@@ -429,7 +454,7 @@ MeshTest::Run ()
   ofs.close();
 
   Simulator::Destroy ();
-  
+
   return 0;
 }
 void
@@ -452,10 +477,28 @@ MeshTest::Report ()
       of.close ();
     }
 }
+void
+MeshTest::checkLocation(){
+		for(int n = 0; n < m_numNodes; n++){
+			Ptr<ConstantVelocityMobilityModel> bee = nodes.Get(n)->GetObject<ConstantVelocityMobilityModel>();
+			Vector position = bee->GetPosition();
+			//std::cout << "POSITIONX:   " << std::to_string(position.x) + "POSITIONY:   " << std::to_string(position.y);
+
+			if(std::abs(position.x) >= (uint32_t) m_totalTime*1.2 || std::abs(position.y) >= (uint32_t) m_totalTime*1.25 || std::abs(position.x) > 200 || std::abs(position.y) > 200)
+			{
+				bee->SetVelocity(Vector(0,0,0));
+			}
+      else
+      {
+        bee->SetVelocity(Vector(0.1,0.1,0));
+      }
+
+	}
+}
 int
 main (int argc, char *argv[])
 {
-  MeshTest t; 
+  MeshTest t;
   t.Configure (argc, argv);
   return t.Run ();
 }
