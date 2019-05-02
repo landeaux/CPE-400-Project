@@ -32,7 +32,7 @@
  */
 
 #include "cairo-wideint-private.h"
-
+#include <climits>
 /**
  * \file
  * \ingroup highprec
