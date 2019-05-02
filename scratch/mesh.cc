@@ -255,7 +255,7 @@ MeshTest::CreateNodes ()
                                  "MinY", DoubleValue (0),
                                  "DeltaX", DoubleValue (m_step),
                                  "DeltaY", DoubleValue (m_step),
-                                 "GridWidth", UintegerValue (m_step),
+                                 "GridWidth", UintegerValue (m_ySize),
                                  "LayoutType", StringValue ("RowFirst"));
 
   mobility.SetMobilityModel ("ns3::ConstantVelocityMobilityModel");
