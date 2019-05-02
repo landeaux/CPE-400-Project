@@ -309,7 +309,7 @@ MeshTest::Run ()
   InstallInternetStack ();
   InstallApplication ();
   //Allow drones to deploy
-  Simulator::Schedule(Seconds (m_totalTime * (m_step/(m_step*m_xSize))), &MeshTest::checkLocation, this);
+  Simulator::Schedule(Seconds (m_totalTime*0.75), &MeshTest::checkLocation, this);
   Simulator::Schedule (Seconds (m_totalTime), &MeshTest::Report, this);
   Simulator::Stop (Seconds (m_totalTime));
 
