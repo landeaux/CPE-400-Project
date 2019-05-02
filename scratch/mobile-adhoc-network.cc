@@ -59,6 +59,10 @@
 #include "ns3/ipv4-list-routing-helper.h"
 #include "ns3/internet-stack-helper.h"
 #include "ns3/netanim-module.h"
+#include "ns3/constant-velocity-mobility-model.h"
+#include "ns3/event-impl.h"
+#include "ns3/make-event.h"
+#include "ns3/simulator.h"
 
 using namespace ns3;
 
@@ -87,6 +91,48 @@ static void GenerateTraffic (Ptr<Socket> socket, uint32_t pktSize,
     }
 }
 
+void checkLocation(NodeContainer& nodes, MobilityHelper& mobility, uint32_t rows, uint32_t id, uint32_t distance){ 	
+		for(int n = 0; n < 25; n++){
+			Ptr<ConstantVelocityMobilityModel> bee = nodes.Get(n)->GetObject<ConstantVelocityMobilityModel>();
+			Vector position = bee->GetPosition();
+			//std::cout << "POSITIONX:   " << std::to_string(position.x) + "POSITIONY:   " << std::to_string(position.y);
+			
+			if(std::abs(position.x) >= (uint32_t) id/rows*4*rows/distance && std::abs(position.y) >= (uint32_t) id%rows*4*rows/distance)
+			{
+				bee->SetVelocity(Vector(0,0,0));
+				std::cout << "Yeah we hit the barrier" << std::endl;
+			}
+			else
+			{
+				bee->SetVelocity(Vector(std::abs((uint32_t)(id/rows*2*rows/distance) - position.x),std::abs((uint32_t)((id+1)%rows*2*rows/distance) - position.y),0));
+				std::cout << "Nope, we are stuck here and the new velocity is:   " << bee->GetVelocity() << std::endl;
+			}
+	}
+
+  Ptr<ConstantVelocityMobilityModel> beeOne = nodes.Get(rows*rows - 1)->GetObject<ConstantVelocityMobilityModel>();
+  Vector positionOne = beeOne->GetPosition();
+
+
+  Ptr<ConstantVelocityMobilityModel> beeTwo = nodes.Get(rows*rows - 2)->GetObject<ConstantVelocityMobilityModel>();
+  Vector positionTwo = beeTwo->GetPosition();
+
+
+  Ptr<ConstantVelocityMobilityModel> beeThree = nodes.Get((rows*rows-1) - rows)->GetObject<ConstantVelocityMobilityModel>();
+  Vector positionThree = beeThree->GetPosition();
+
+  std::string val("ns3::ConstantRandomVariable[Constant=" + std::to_string(std::ceil(positionOne.x-positionTwo.x)) + "]");
+  mobility.SetMobilityModel("ns3::RandomWalk2dMobilityModel", "Bounds", RectangleValue (Rectangle (0,(uint32_t) (positionOne.x),0,(uint32_t) (positionOne.y))),
+			  "Speed", StringValue (val));
+  
+  mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
+                                 "MinX", DoubleValue (0),
+                                 "MinY", DoubleValue (0),
+                                 "DeltaX", DoubleValue (std::abs(positionOne.x-positionTwo.x)),
+                                 "DeltaY", DoubleValue (std::abs(positionOne.y - positionThree.y)),
+                                 "GridWidth", UintegerValue (5),
+                                 "LayoutType", StringValue ("RowFirst"));
+  mobility.Install(nodes);
+}
 
 int main (int argc, char *argv[])
 {
@@ -94,7 +140,7 @@ int main (int argc, char *argv[])
 
   int id = 0;
   uint32_t packetSize = 1000; // bytes
-  uint32_t numPackets = 1;
+  uint32_t numPackets = 5;
   uint32_t numNodes = 25;  // by default, 5x5
   uint32_t sinkNode = 0;
   uint32_t sourceNode = (uint32_t) -1;
@@ -125,7 +171,7 @@ int main (int argc, char *argv[])
 
   if (sourceNode == ((uint32_t) -1))
   {
-    sourceNode = numNodes - 1;
+    sourceNode = numNodes - 2;
   }
 
   NodeContainer nodes;
@@ -161,18 +207,16 @@ int main (int argc, char *argv[])
 
   MobilityHelper mobility;
   mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
-                                 "MinX", DoubleValue (2.0 * distance),
-                                 "MinY", DoubleValue (2.0 * distance),
-                                 "DeltaX", DoubleValue (distance),
-                                 "DeltaY", DoubleValue (distance),
-                                 "GridWidth", UintegerValue (5),
+                                 "MinX", DoubleValue (0),
+                                 "MinY", DoubleValue (0),
+                                 "DeltaX", DoubleValue (2*distance),
+                                 "DeltaY", DoubleValue (2*distance),
+                                 "GridWidth", UintegerValue (distance),
                                  "LayoutType", StringValue ("RowFirst"));
 
   // double speed = std::max((int) (distance / 3.0), 1);
   std::string val("ns3::ConstantRandomVariable[Constant=" + std::to_string(distance) + "]");
-  mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
-                             "Bounds", RectangleValue (Rectangle (0, distance * 2 * 5, 0, distance * std::max((int) std::ceil(numNodes / 5), 1) * 2)),
-                             "Speed", StringValue (val));
+  mobility.SetMobilityModel ("ns3::ConstantVelocityMobilityModel");
   
   //UintegerValue (std::max((int) (distance / 5.0), 1))
 
@@ -194,16 +238,31 @@ int main (int argc, char *argv[])
   NS_LOG_INFO ("Assign IP Addresses.");
   ipv4.SetBase ("10.1.1.0", "255.255.255.0");
   Ipv4InterfaceContainer i = ipv4.Assign (devices);
+ 
 
   TypeId tid = TypeId::LookupByName ("ns3::UdpSocketFactory");
-  Ptr<Socket> recvSink = Socket::CreateSocket (nodes.Get (sinkNode), tid);
-  InetSocketAddress local = InetSocketAddress (Ipv4Address::GetAny (), 80);
-  recvSink->Bind (local);
-  recvSink->SetRecvCallback (MakeCallback (&ReceivePacket));
+  Ptr<Socket> recvSink[numNodes-1];
+
+  for(uint32_t i = 0; i < 4; i++){
+	  tid = TypeId::LookupByName ("ns3::UdpSocketFactory");
+	  recvSink[i] = Socket::CreateSocket (nodes.Get (i*5+i), tid);
+	  InetSocketAddress local = InetSocketAddress (Ipv4Address::GetAny (), 80);
+	  recvSink[i]->Bind (local);
+	  recvSink[i]->SetRecvCallback (MakeCallback (&ReceivePacket));
+  }
 
   Ptr<Socket> source = Socket::CreateSocket (nodes.Get (sourceNode), tid);
   InetSocketAddress remote = InetSocketAddress (i.GetAddress (sinkNode, 0), 80);
   source->Connect (remote);
+
+  Ptr<ConstantVelocityMobilityModel> bee;
+  Vector position;
+  uint32_t rows = (uint32_t) std::sqrt(numNodes);
+  for(uint32_t n = 0; n < numNodes; n++){
+	  bee = nodes.Get(n)->GetObject<ConstantVelocityMobilityModel>();
+	  position = bee->GetPosition();
+	  bee->SetVelocity(Vector((uint32_t)(n%rows*(rows/distance)), (uint32_t)((n)/rows*(rows/distance)), 0));
+  }
 
   if (tracing == true)
     {
@@ -220,9 +279,13 @@ int main (int argc, char *argv[])
     }
 
   // Give OLSR time to converge-- 30 seconds perhaps
-  Simulator::Schedule (Seconds (30.0), &GenerateTraffic,
-                       source, packetSize, numPackets, interPacketInterval);
+  Callback <void, Ptr<ConstantVelocityMobilityModel>, uint32_t, uint32_t> locationCheck;
+ 
+  Simulator::Schedule (Seconds (20), &checkLocation, nodes, mobility, rows, 0, distance);
 
+  
+  Simulator::Schedule(Seconds(21), &GenerateTraffic, source, packetSize, numPackets, interPacketInterval);
+ 
   // Output what we are doing
   NS_LOG_UNCOND ("Testing from node " << sourceNode << " to " << sinkNode);
 
@@ -236,13 +299,17 @@ int main (int argc, char *argv[])
 
   anim.UpdateNodeDescription (nodes.Get (sourceNode), "Source");
   anim.UpdateNodeColor (nodes.Get (sourceNode), 0, 255, 0);
-  anim.UpdateNodeDescription (nodes.Get (sinkNode), "Sink");
-  anim.UpdateNodeColor (nodes.Get (sinkNode), 0, 0, 255);
 
-  Simulator::Stop (Seconds (33.0));
+  for(int i = 0; i < 5; i++){
+	  anim.UpdateNodeDescription (nodes.Get (i*5+i), "Sink");
+	  anim.UpdateNodeColor (nodes.Get (i*5+i), 0, 0, 255);
+  }
+
+  Simulator::Stop (Seconds (30));
   Simulator::Run ();
   Simulator::Destroy ();
 
   return 0;
 }
+
 
