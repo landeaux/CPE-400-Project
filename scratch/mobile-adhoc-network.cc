@@ -52,6 +52,7 @@
 #include "ns3/yans-wifi-helper.h"
 #include "ns3/mobility-helper.h"
 #include "ns3/ipv4-address-helper.h"
+#include "ns3/ipv4-interface-address.h"
 #include "ns3/yans-wifi-channel.h"
 #include "ns3/mobility-model.h"
 #include "ns3/olsr-helper.h"
@@ -59,17 +60,63 @@
 #include "ns3/ipv4-list-routing-helper.h"
 #include "ns3/internet-stack-helper.h"
 #include "ns3/netanim-module.h"
+#include "ns3/network-module.h"
+#include "ns3/internet-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/applications-module.h"
+#include "ns3/ipv4-global-routing-helper.h"
+#include "ns3/node.h"
+#include "ns3/net-device.h"
 
 using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("WifiSimpleAdhocGrid");
 
+//globals cuz MakeCallback is dumb :'(
+uint32_t NUMBER_OF_NODES = 0;
+std::ofstream HOPS_FILE;
+
+void GetPacketHops(Ptr<Packet const> pkt, uint8_t& numHops, uint8_t initialTTL = 255) {
+  Header* header = new Ipv4Header;
+  pkt->PeekHeader(*header);
+  //header->Print(std::cout);
+  //std::cout << std::endl;
+  uint8_t ttl = ((Ipv4Header*) header)->GetTtl();
+  NS_LOG_UNCOND((int) ttl);
+  numHops = initialTTL - ttl;
+}
+
+static void LogHops(Ptr<Packet const> pkt, uint32_t numNodes, std::ofstream& out) {
+  uint8_t hops;
+  GetPacketHops(pkt, hops);
+  out << numNodes << '\t' << (int) hops << std::endl;
+
+}
+
 void ReceivePacket (Ptr<Socket> socket)
 {
-  while (socket->Recv ())
-    {
+  Ptr<Packet> pkt = socket->Recv();
+  while (pkt != NULL) {
       NS_LOG_UNCOND ("Received one packet!");
+      pkt = socket->Recv();
     }
+}
+
+void Ipv4L3ProtocolRxTxSink (Ptr<Packet const> pkt, Ptr<Ipv4> ipv4, uint32_t interface) {
+  //static int run = 0;
+  Ipv4Address addr = ipv4->GetAddress(interface, 0).GetLocal();
+  Header* header = new Ipv4Header;
+  pkt->PeekHeader(*header);
+  //std::cout << (int) ((Ipv4Header*) header)->GetTtl() << std::endl;
+  
+  //if (run++ % 100 == 0) {
+  //  header->Print(std::cout);
+  //  std::cout << std::endl;
+  //} 
+  
+  if (((Ipv4Header*) header)->GetDestination() == addr) {
+    LogHops(pkt, NUMBER_OF_NODES, HOPS_FILE);
+  }
 }
 
 static void GenerateTraffic (Ptr<Socket> socket, uint32_t pktSize,
@@ -102,6 +149,7 @@ int main (int argc, char *argv[])
   bool verbose = false;
   bool tracing = false;
   uint32_t distance = 5;
+  std::string hopsFileName = "";
 
   CommandLine cmd;
   cmd.AddValue ("id", "Experiment ID, to customize output file [0]", id);
@@ -115,6 +163,7 @@ int main (int argc, char *argv[])
   cmd.AddValue ("sinkNode", "Receiver node number", sinkNode);
   cmd.AddValue ("sourceNode", "Sender node number", sourceNode);
   cmd.AddValue ("distance", "Distance between nodes", distance);
+  cmd.AddValue ("hopsFile", "File to append average hops per node", hopsFileName);
   cmd.Parse (argc, argv);
   // Convert to time object
   Time interPacketInterval = Seconds (interval);
@@ -123,13 +172,32 @@ int main (int argc, char *argv[])
   Config::SetDefault ("ns3::WifiRemoteStationManager::NonUnicastMode",
                       StringValue (phyMode));
 
+  //Set default time to live for ipv4 packets to 255
+  Config::SetDefault("ns3::Ipv4L3Protocol::DefaultTtl", UintegerValue(255));
   if (sourceNode == ((uint32_t) -1))
   {
     sourceNode = numNodes - 1;
   }
+  NUMBER_OF_NODES = numNodes;
+
+  //std::ofstream hopsFile = NULL;
+  if (hopsFileName != "") {
+    //hopsFile.open(hopsFileName.c_str(), std::ofstream::out | std::ofstream::app);
+    HOPS_FILE.open(hopsFileName.c_str(), std::ofstream::out | std::ofstream::app);
+  }
 
   NodeContainer nodes;
   nodes.Create (numNodes);
+
+  //doesn't work because whoever made the container was an idiot
+  //for (auto n : nodes) {
+  //  n->SetIpRecvTtl(true);
+  //}
+  
+  for (auto n = nodes.Begin(); n < nodes.End(); n++) {
+    //n->SetIpRecvTtl(true);
+    //n->AddDevice(new NetworkDevice);
+  }
 
   // The below set of helpers will help us to put together the wifi NICs we want
   WifiHelper wifi;
@@ -190,6 +258,8 @@ int main (int argc, char *argv[])
   internet.SetRoutingHelper (list); // has effect on the next Install ()
   internet.Install (nodes);
 
+  Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
+
   Ipv4AddressHelper ipv4;
   NS_LOG_INFO ("Assign IP Addresses.");
   ipv4.SetBase ("10.1.1.0", "255.255.255.0");
@@ -200,10 +270,13 @@ int main (int argc, char *argv[])
   InetSocketAddress local = InetSocketAddress (Ipv4Address::GetAny (), 80);
   recvSink->Bind (local);
   recvSink->SetRecvCallback (MakeCallback (&ReceivePacket));
+  recvSink->SetIpRecvTtl(true);
 
+  Config::ConnectWithoutContext("NodeList/*/$ns3::Ipv4L3Protocol/Rx", MakeCallback(Ipv4L3ProtocolRxTxSink));
   Ptr<Socket> source = Socket::CreateSocket (nodes.Get (sourceNode), tid);
   InetSocketAddress remote = InetSocketAddress (i.GetAddress (sinkNode, 0), 80);
   source->Connect (remote);
+  source->SetIpRecvTtl(true);
 
   if (tracing == true)
     {
