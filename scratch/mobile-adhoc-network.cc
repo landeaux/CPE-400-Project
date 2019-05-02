@@ -42,6 +42,7 @@
 // tcpdump -r mobile-adhoc-network-0-0.pcap -nn -tt
 //
 
+#include "ns3/core-module.h"
 #include "ns3/command-line.h"
 #include "ns3/config.h"
 #include "ns3/uinteger.h"
@@ -96,10 +97,11 @@ int main (int argc, char *argv[])
   uint32_t numPackets = 1;
   uint32_t numNodes = 25;  // by default, 5x5
   uint32_t sinkNode = 0;
-  uint32_t sourceNode = numNodes - 1;
+  uint32_t sourceNode = (uint32_t) -1;
   double interval = 1.0; // seconds
   bool verbose = false;
   bool tracing = false;
+  uint32_t distance = 5;
 
   CommandLine cmd;
   cmd.AddValue ("id", "Experiment ID, to customize output file [0]", id);
@@ -112,6 +114,7 @@ int main (int argc, char *argv[])
   cmd.AddValue ("numNodes", "number of nodes", numNodes);
   cmd.AddValue ("sinkNode", "Receiver node number", sinkNode);
   cmd.AddValue ("sourceNode", "Sender node number", sourceNode);
+  cmd.AddValue ("distance", "Distance between nodes", distance);
   cmd.Parse (argc, argv);
   // Convert to time object
   Time interPacketInterval = Seconds (interval);
@@ -119,6 +122,11 @@ int main (int argc, char *argv[])
   // Fix non-unicast data rate to be the same as that of unicast
   Config::SetDefault ("ns3::WifiRemoteStationManager::NonUnicastMode",
                       StringValue (phyMode));
+
+  if (sourceNode == ((uint32_t) -1))
+  {
+    sourceNode = numNodes - 1;
+  }
 
   NodeContainer nodes;
   nodes.Create (numNodes);
@@ -153,15 +161,21 @@ int main (int argc, char *argv[])
 
   MobilityHelper mobility;
   mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
-                                 "MinX", DoubleValue (10.0),
-                                 "MinY", DoubleValue (10.0),
-                                 "DeltaX", DoubleValue (5.0),
-                                 "DeltaY", DoubleValue (5.0),
+                                 "MinX", DoubleValue (2.0 * distance),
+                                 "MinY", DoubleValue (2.0 * distance),
+                                 "DeltaX", DoubleValue (distance),
+                                 "DeltaY", DoubleValue (distance),
                                  "GridWidth", UintegerValue (5),
                                  "LayoutType", StringValue ("RowFirst"));
 
+  // double speed = std::max((int) (distance / 3.0), 1);
+  std::string val("ns3::ConstantRandomVariable[Constant=" + std::to_string(distance) + "]");
   mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
-                             "Bounds", RectangleValue (Rectangle (0, 50, 0, 50)));
+                             "Bounds", RectangleValue (Rectangle (0, distance * 2 * 5, 0, distance * std::max((int) std::ceil(numNodes / 5), 1) * 2)),
+                             "Speed", StringValue (val));
+  
+  //UintegerValue (std::max((int) (distance / 5.0), 1))
+
   mobility.Install (nodes);
 
   // Enable OLSR
@@ -214,6 +228,11 @@ int main (int argc, char *argv[])
 
   std::string animFilename = "mobile-adhoc-network-anim_" + std::to_string(id) + ".xml";
   AnimationInterface anim (animFilename);
+
+  for (uint32_t i = 0; i < numNodes; i++)
+  {
+    anim.UpdateNodeSize (i, (distance / 5.0), (distance / 5.0));
+  }
 
   anim.UpdateNodeDescription (nodes.Get (sourceNode), "Source");
   anim.UpdateNodeColor (nodes.Get (sourceNode), 0, 255, 0);
