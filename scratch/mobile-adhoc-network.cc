@@ -60,6 +60,13 @@
 #include "ns3/ipv4-list-routing-helper.h"
 #include "ns3/internet-stack-helper.h"
 #include "ns3/netanim-module.h"
+#include "ns3/network-module.h"
+#include "ns3/internet-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/applications-module.h"
+#include "ns3/ipv4-global-routing-helper.h"
+#include "ns3/node.h"
+#include "ns3/net-device.h"
 
 using namespace ns3;
 
@@ -75,7 +82,7 @@ void GetPacketHops(Ptr<Packet const> pkt, uint8_t& numHops, uint8_t initialTTL =
   //header->Print(std::cout);
   //std::cout << std::endl;
   uint8_t ttl = ((Ipv4Header*) header)->GetTtl();
-  //NS_LOG_UNCOND((int) ttl);
+  NS_LOG_UNCOND((int) ttl);
   numHops = initialTTL - ttl;
 }
 
@@ -96,9 +103,17 @@ void ReceivePacket (Ptr<Socket> socket)
 }
 
 void Ipv4L3ProtocolRxTxSink (Ptr<Packet const> pkt, Ptr<Ipv4> ipv4, uint32_t interface) {
+  //static int run = 0;
   Ipv4Address addr = ipv4->GetAddress(interface, 0).GetLocal();
   Header* header = new Ipv4Header;
   pkt->PeekHeader(*header);
+  //std::cout << (int) ((Ipv4Header*) header)->GetTtl() << std::endl;
+  
+  //if (run++ % 100 == 0) {
+  //  header->Print(std::cout);
+  //  std::cout << std::endl;
+  //} 
+  
   if (((Ipv4Header*) header)->GetDestination() == addr) {
     LogHops(pkt, NUMBER_OF_NODES, HOPS_FILE);
   }
@@ -157,6 +172,8 @@ int main (int argc, char *argv[])
   Config::SetDefault ("ns3::WifiRemoteStationManager::NonUnicastMode",
                       StringValue (phyMode));
 
+  //Set default time to live for ipv4 packets to 255
+  Config::SetDefault("ns3::Ipv4L3Protocol::DefaultTtl", UintegerValue(255));
   if (sourceNode == ((uint32_t) -1))
   {
     sourceNode = numNodes - 1;
@@ -171,6 +188,16 @@ int main (int argc, char *argv[])
 
   NodeContainer nodes;
   nodes.Create (numNodes);
+
+  //doesn't work because whoever made the container was an idiot
+  //for (auto n : nodes) {
+  //  n->SetIpRecvTtl(true);
+  //}
+  
+  for (auto n = nodes.Begin(); n < nodes.End(); n++) {
+    //n->SetIpRecvTtl(true);
+    //n->AddDevice(new NetworkDevice);
+  }
 
   // The below set of helpers will help us to put together the wifi NICs we want
   WifiHelper wifi;
@@ -210,7 +237,7 @@ int main (int argc, char *argv[])
                                  "LayoutType", StringValue ("RowFirst"));
 
   // double speed = std::max((int) (distance / 3.0), 1);
-  std::string val("ns3::ConstantRandomVariable[Constant=" + std::to_string(distance) + "]");
+  std::string val("ns3::ConstantRandomVariable[Constant=" + std::to_string(1) + "]");
   mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
                              "Bounds", RectangleValue (Rectangle (0, distance * 2 * 5, 0, distance * std::max((int) std::ceil(numNodes / 5), 1) * 2)),
                              "Speed", StringValue (val));
@@ -231,6 +258,8 @@ int main (int argc, char *argv[])
   internet.SetRoutingHelper (list); // has effect on the next Install ()
   internet.Install (nodes);
 
+  Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
+
   Ipv4AddressHelper ipv4;
   NS_LOG_INFO ("Assign IP Addresses.");
   ipv4.SetBase ("10.1.1.0", "255.255.255.0");
@@ -241,11 +270,13 @@ int main (int argc, char *argv[])
   InetSocketAddress local = InetSocketAddress (Ipv4Address::GetAny (), 80);
   recvSink->Bind (local);
   recvSink->SetRecvCallback (MakeCallback (&ReceivePacket));
-  
+  recvSink->SetIpRecvTtl(true);
+
   Config::ConnectWithoutContext("NodeList/*/$ns3::Ipv4L3Protocol/Rx", MakeCallback(Ipv4L3ProtocolRxTxSink));
   Ptr<Socket> source = Socket::CreateSocket (nodes.Get (sourceNode), tid);
   InetSocketAddress remote = InetSocketAddress (i.GetAddress (sinkNode, 0), 80);
   source->Connect (remote);
+  source->SetIpRecvTtl(true);
 
   if (tracing == true)
     {
