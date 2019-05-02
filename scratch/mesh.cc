@@ -402,7 +402,7 @@ MeshTest::Run ()
   if (!fileExists("averages.dat"))
     {
       ofs.open ("averages.dat");
-      ofs << "experimentID avgPDR", "avgJitter", "avgThroughput", "avgDelay" << std::endl;
+      ofs << "experimentID avgPDR avgJitter avgThroughput avgDelay" << std::endl;
     }
   else 
     {
