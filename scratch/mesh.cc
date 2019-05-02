@@ -46,6 +46,7 @@
 #include <iostream>
 #include <sstream>
 #include <fstream>
+#include <map>
 #include "ns3/core-module.h"
 #include "ns3/internet-module.h"
 #include "ns3/network-module.h"
@@ -55,10 +56,33 @@
 #include "ns3/mesh-helper.h"
 #include "ns3/yans-wifi-helper.h"
 #include "ns3/netanim-module.h"
+#include "ns3/flow-monitor.h"
+#include "ns3/flow-monitor-helper.h"
+#include "ns3/ipv4-flow-classifier.h"
+#include <sys/stat.h> // fileExists
 
 using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("TestMeshScript");
+
+// Function: fileExists
+// Credit: https://stackoverflow.com/a/6296808
+/**
+    Check if a file exists
+@param[in] filename - the name of the file to check
+
+@return    true if the file exists, else false
+
+*/
+bool fileExists(const std::string& filename)
+{
+    struct stat buf;
+    if (stat(filename.c_str(), &buf) != -1)
+    {
+        return true;
+    }
+    return false;
+}
 
 /**
  * \ingroup mesh
@@ -82,18 +106,19 @@ public:
    */
   int Run ();
 private:
-  int       m_id; ///< Experiment ID
-  int       m_xSize; ///< X size
-  int       m_ySize; ///< Y size
-  double    m_step; ///< step
-  double    m_randomStart; ///< random start
-  double    m_totalTime; ///< total time
-  double    m_packetInterval; ///< packet interval
-  uint16_t  m_packetSize; ///< packet size
-  uint32_t  m_nIfaces; ///< number interfaces
-  bool      m_chan; ///< channel
-  bool      m_pcap; ///< PCAP
-  bool      m_ascii; ///< ASCII
+  int         m_id; ///< Experiment ID
+  int         m_xSize; ///< X size
+  int         m_ySize; ///< Y size
+  int         m_numNodes; ///< total number of nodes
+  double      m_step; ///< step
+  double      m_randomStart; ///< random start
+  double      m_totalTime; ///< total time
+  double      m_packetInterval; ///< packet interval
+  uint16_t    m_packetSize; ///< packet size
+  uint32_t    m_nIfaces; ///< number interfaces
+  bool        m_chan; ///< channel
+  bool        m_pcap; ///< PCAP
+  bool        m_ascii; ///< ASCII
   std::string m_stack; ///< stack
   std::string m_root; ///< root
   /// List of network nodes
@@ -118,6 +143,7 @@ MeshTest::MeshTest () :
   m_id (0),
   m_xSize (3),
   m_ySize (3),
+  m_numNodes(m_xSize*m_ySize),
   m_step (100.0),
   m_randomStart (0.1),
   m_totalTime (100.0),
@@ -165,7 +191,7 @@ MeshTest::CreateNodes ()
   /*
    * Create m_ySize*m_xSize stations to form a grid topology
    */
-  nodes.Create (m_ySize*m_xSize);
+  nodes.Create (m_numNodes);
   // Configure YansWifiChannel
   YansWifiPhyHelper wifiPhy = YansWifiPhyHelper::Default ();
   YansWifiChannelHelper wifiChannel = YansWifiChannelHelper::Default ();
@@ -248,7 +274,7 @@ MeshTest::InstallApplication ()
   echoClient.SetAttribute ("MaxPackets", UintegerValue ((uint32_t)(m_totalTime*(1/m_packetInterval))));
   echoClient.SetAttribute ("Interval", TimeValue (Seconds (m_packetInterval)));
   echoClient.SetAttribute ("PacketSize", UintegerValue (m_packetSize));
-  ApplicationContainer clientApps = echoClient.Install (nodes.Get (m_xSize*m_ySize-1));
+  ApplicationContainer clientApps = echoClient.Install (nodes.Get (m_numNodes-1));
   clientApps.Start (Seconds (0.0));
   clientApps.Stop (Seconds (m_totalTime));
 }
@@ -271,8 +297,8 @@ MeshTest::Run ()
     }
 
   // Update Node Color and Description for Sink and Source nodes
-  anim.UpdateNodeDescription (nodes.Get (m_xSize*m_ySize-1), "Source");
-  anim.UpdateNodeColor (nodes.Get (m_xSize*m_ySize-1), 0, 255, 0);
+  anim.UpdateNodeDescription (nodes.Get (m_numNodes-1), "Source");
+  anim.UpdateNodeColor (nodes.Get (m_numNodes-1), 0, 255, 0);
   anim.UpdateNodeDescription (nodes.Get (0), "Sink");
   anim.UpdateNodeColor (nodes.Get (0), 0, 0, 255);
 
@@ -284,8 +310,125 @@ MeshTest::Run ()
   anim.EnableWifiMacCounters (Seconds (0), Seconds(10));
   anim.EnableWifiPhyCounters (Seconds (0), Seconds(10));
 
+  FlowMonitorHelper flowmon;
+  Ptr<FlowMonitor> monitor = flowmon.InstallAll();
+
   Simulator::Run ();
+
+  monitor->CheckForLostPackets ();
+  Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier> (flowmon.GetClassifier ());
+  std::map<FlowId, FlowMonitor::FlowStats> stats = monitor->GetFlowStats ();
+
+  uint32_t txPacketSum = 0;   // 15
+  uint32_t rxPacketSum = 0;   // 10 
+  uint32_t dropPacketSum = 0; // 15
+  uint32_t lostPacketSum = 0; // 15
+  uint32_t rxBytesSum = 0;    // 15
+  double delaySum = 0;        // 0
+
+  // std::ofstream ofs ("ResultGraph.plt", std::ofstream::out);
+
+  // ofs << "set terminal png" << std::endl;
+  // ofs << "set output 'ResultGraph.png'" << std::endl;
+  // ofs << "set title ''" << std::endl;
+  // ofs << "set xlabel 'Nodes'" << std::endl;
+  // ofs << "set ylabel 'value'" << std::endl;
+  // ofs << "plot" << " '-' title 'Packet Inter-arrival Time (ms)' with linespoints,"
+  //               << " '-' title 'Jitter' with lines,"
+  //               << " '-' title 'Throughput' with lines,"
+  //               << " '-' title 'Delay' with lines" << std::endl;
+  // ofs << "1 " << 0 << std::endl;
+  // ofs << (m_numNodes) << " " << Seconds (m_packetInterval) / (1e8) << std::endl;
+  // ofs << "e" << std::endl;
+  // ofs << "1 " << 0 << std::endl;
+  // ofs << (m_numNodes) << " " << avgJitter << std::endl;
+  // ofs << "e" << std::endl;
+  // ofs << "1 " << 0 << std::endl;
+  // ofs << (m_numNodes) << " " << avgThroughput << std::endl;
+  // ofs << "e" << std::endl;
+  // ofs << "1 " << 0 << std::endl;
+  // ofs << (m_numNodes) << " " << avgDelay << std::endl;
+  // ofs << "e" << std::endl;
+
+  std::ofstream ofs;
+
+  if (!fileExists("results.dat"))
+    {
+      ofs.open ("results.dat");
+      ofs << "experimentID numNodes nodeID txPackets rxPackets lostPackets dropPackets delay rxBytes" << std::endl;
+    }
+  else 
+    {
+      ofs.open ("results.dat", std::ofstream::app);
+    }
+
+  for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator iter = stats.begin (); iter != stats.end (); ++iter)
+    {
+      uint32_t nodeID      = iter->first;
+      uint32_t txPackets   = iter->second.txPackets;
+      uint32_t rxPackets   = iter->second.rxPackets;
+      uint32_t lostPackets = iter->second.lostPackets;
+      uint32_t dropPackets = iter->second.packetsDropped.size ();
+      double   delay       = iter->second.delaySum.GetSeconds ();
+      uint32_t rxBytes     = iter->second.rxBytes;
+
+      txPacketSum   += txPackets;
+      rxPacketSum   += rxPackets;
+      lostPacketSum += lostPackets;
+      dropPacketSum += dropPackets;
+      delaySum      += delay;
+      rxBytesSum    += rxBytes;
+
+      ofs << m_id        << " "
+          << m_numNodes  << " "
+          << nodeID      << " "
+          << txPackets   << " "
+          << rxPackets   << " "
+          << lostPackets << " "
+          << dropPackets << " "
+          << delay       << " "
+          << rxBytes     << "\n";
+    }
+
+  ofs.close();
+
+  double avgPDR = ((rxPacketSum * 100) / txPacketSum); // PDR = Packet Delivery Ratio
+  double avgJitter = ((lostPacketSum * 100) / txPacketSum);
+  double avgThroughput = ((rxBytesSum * 8.0) / m_totalTime) / 1024 / 4;
+  double avgDelay = (delaySum / rxPacketSum) * 1000;
+
+  if (!fileExists("averages.dat"))
+    {
+      ofs.open ("averages.dat");
+      ofs << "experimentID numNodes nodeID txPackets rxPackets lostPackets dropPackets delay rxBytes" << std::endl;
+    }
+  else 
+    {
+      ofs.open ("averages.dat", std::ofstream::app);
+    }
+
+  ofs << m_id          << " "
+      << avgPDR        << " "
+      << avgJitter     << " "
+      << avgThroughput << " "
+      << avgDelay      << "\n";
+
+  NS_LOG_UNCOND ("\ntxPacketSum: " << txPacketSum   << " ");
+  NS_LOG_UNCOND ("rxPacketSum: "   << rxPacketSum   << " ");
+  NS_LOG_UNCOND ("lostPacketSum: " << lostPacketSum << " ");
+  NS_LOG_UNCOND ("dropPacketSum: " << dropPacketSum << " ");
+  NS_LOG_UNCOND ("delaySum: "      << delaySum      << " ms");
+  NS_LOG_UNCOND ("rxBytesSum: "    << rxBytesSum    << " B\n");
+
+  NS_LOG_UNCOND ("Average PDR: "        << avgPDR        << " ");
+  NS_LOG_UNCOND ("Average Jitter: "     << avgJitter     << " ");
+  NS_LOG_UNCOND ("Average Throughput: " << avgThroughput << " Mbps");
+  NS_LOG_UNCOND ("Average Delay: "      << avgDelay      << " ms" << "\n");
+
+  ofs.close();
+
   Simulator::Destroy ();
+  
   return 0;
 }
 void
