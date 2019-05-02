@@ -59,6 +59,7 @@
 #include "ns3/flow-monitor.h"
 #include "ns3/flow-monitor-helper.h"
 #include "ns3/ipv4-flow-classifier.h"
+#include "ns3/ipv4-global-routing-helper.h"
 #include <sys/stat.h> // fileExists
 
 using namespace ns3;
@@ -82,6 +83,49 @@ bool fileExists(const std::string& filename)
         return true;
     }
     return false;
+}
+
+/// Callback function for every time a packet is received (used to count hops)
+std::ofstream HOPS_FILE;
+uint32_t NUM_NODES;
+void Ipv4L3ProtocolRxTxSink(Ptr<Packet const> pkt, Ptr<Ipv4> ipv4, uint32_t interface) {
+  std::cout << "Packet received" << std::endl;
+  Ipv4Address addr = ipv4->GetAddress(interface, 0).GetLocal();
+  Header* header = new Ipv4Header;
+  pkt->PeekHeader(*header);
+  if (((Ipv4Header*) header)->GetDestination() == addr) {//If the packet received is at its destination
+    uint8_t defaultTTL = 255;//set via configuration in CreateNodes
+    uint8_t ttl = ((Ipv4Header*) header)->GetTtl();
+    uint8_t numHops = defaultTTL - ttl;
+    HOPS_FILE << NUM_NODES << '\t' << (int) numHops << std::endl;
+    std::cout << NUM_NODES << '\t' << (int) numHops << std::endl;
+  }
+}
+
+/// Generate packets for analysis
+static void GenerateTraffic (Ptr<Socket> socket, uint32_t pktSize,
+                             uint32_t pktCount, Time pktInterval )
+{
+  if (pktCount > 0)
+    {
+      socket->Send (Create<Packet> (pktSize));
+      Simulator::Schedule (pktInterval, &GenerateTraffic,
+                           socket, pktSize, pktCount - 1, pktInterval);
+    }
+  else
+    {
+      socket->Close ();
+    }
+}
+
+/// Callback to receive the packets
+void ReceivePacket (Ptr<Socket> socket)
+{
+  Ptr<Packet> pkt = socket->Recv();
+  while (pkt != NULL) {
+      //NS_LOG_UNCOND ("Received one packet!");
+      pkt = socket->Recv();
+    }
 }
 
 /**
@@ -121,6 +165,7 @@ private:
   bool        m_ascii; ///< ASCII
   std::string m_stack; ///< stack
   std::string m_root; ///< root
+  std::string m_hopsFileName; ///< Name of the file to hold hops count
   /// List of network nodes
   NodeContainer nodes;
   /// List of all mesh point devices
@@ -153,7 +198,8 @@ MeshTest::MeshTest () :
   m_pcap (false),
   m_ascii (false),
   m_stack ("ns3::Dot11sStack"),
-  m_root ("ff:ff:ff:ff:ff:ff")
+  m_root ("ff:ff:ff:ff:ff:ff"),
+  m_hopsFileName("hopsFile")
 {
 }
 void
@@ -175,20 +221,28 @@ MeshTest::Configure (int argc, char *argv[])
   cmd.AddValue ("ascii",   "Enable Ascii traces on interfaces", m_ascii);
   cmd.AddValue ("stack",  "Type of protocol stack. ns3::Dot11sStack by default", m_stack);
   cmd.AddValue ("root", "Mac address of root mesh point in HWMP", m_root);
+  cmd.AddValue ("hopsFile", "The file to append the number of hops per packet", m_hopsFileName);
   cmd.Parse (argc, argv);
 
   m_numNodes = m_xSize * m_ySize;
-
+  NUM_NODES = m_numNodes;
+ 
   NS_LOG_DEBUG ("Grid:" << m_xSize << "*" << m_ySize);
   NS_LOG_DEBUG ("Simulation time: " << m_totalTime << " s");
   if (m_ascii)
     {
       PacketMetadata::Enable ();
     }
+
+
 }
 void
 MeshTest::CreateNodes ()
 { 
+  //Set Default TTL
+  Config::SetDefault("ns3::Ipv4L3Protocol::DefaultTtl", UintegerValue(255));
+  //Attach callback to IPv4 Packets on L3 for packet reception
+  Config::ConnectWithoutContext("NodeList/*/$ns3::Ipv4L3Protocol/Rx", MakeCallback(&Ipv4L3ProtocolRxTxSink));
   /*
    * Create m_ySize*m_xSize stations to form a grid topology
    */
@@ -263,6 +317,7 @@ MeshTest::InstallInternetStack ()
   Ipv4AddressHelper address;
   address.SetBase ("10.1.1.0", "255.255.255.0");
   interfaces = address.Assign (meshDevices);
+  Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 }
 void
 MeshTest::InstallApplication ()
@@ -282,6 +337,7 @@ MeshTest::InstallApplication ()
 int
 MeshTest::Run ()
 {
+  HOPS_FILE.open(m_hopsFileName.c_str(), std::ofstream::out | std::ofstream::app);
   CreateNodes ();
   InstallInternetStack ();
   InstallApplication ();
@@ -313,6 +369,28 @@ MeshTest::Run ()
 
   FlowMonitorHelper flowmon;
   Ptr<FlowMonitor> monitor = flowmon.InstallAll();
+
+  // Set up sockets for sending and receiving packets
+  TypeId tid = TypeId::LookupByName ("ns3::UdpSocketFactory");
+  Ptr<Socket> recvSink = Socket::CreateSocket (nodes.Get (0), tid);
+  InetSocketAddress local = InetSocketAddress (Ipv4Address::GetAny (), 80);
+  recvSink->Bind (local);
+  recvSink->SetRecvCallback (MakeCallback (&ReceivePacket));
+  
+  Ptr<Socket> source = Socket::CreateSocket (nodes.Get (m_numNodes - 1), tid);
+  InetSocketAddress remote = InetSocketAddress (interfaces.GetAddress (0, 0), 80);
+  source->Connect (remote);
+
+  //Schedule packets
+  int numPackets = 1;
+  Time interPacketInterval = Seconds(m_packetInterval);
+
+  Simulator::Schedule (Seconds (m_totalTime / 3), &GenerateTraffic,
+                       source, m_packetSize, numPackets, interPacketInterval);
+  Simulator::Schedule (Seconds (2 * (m_totalTime / 3)), &GenerateTraffic,
+                       source, m_packetSize, numPackets, interPacketInterval);
+  Simulator::Schedule (Seconds (m_totalTime - 10), &GenerateTraffic,
+                       source, m_packetSize, numPackets, interPacketInterval);
 
   Simulator::Run ();
 
@@ -427,7 +505,7 @@ MeshTest::Run ()
   NS_LOG_UNCOND ("Average Delay: "      << avgDelay      << " ms" << "\n");
 
   ofs.close();
-
+  HOPS_FILE.close();
   Simulator::Destroy ();
   
   return 0;
