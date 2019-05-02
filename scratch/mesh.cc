@@ -59,7 +59,8 @@
 #include "ns3/flow-monitor.h"
 #include "ns3/flow-monitor-helper.h"
 #include "ns3/ipv4-flow-classifier.h"
-#include "ns3/ipv4-global-routing-helper.h"
+#include "ns3/csma-module.h"
+#include "ns3/olsr-module.h"
 #include <sys/stat.h> // fileExists
 
 using namespace ns3;
@@ -88,7 +89,7 @@ bool fileExists(const std::string& filename)
 /// Callback function for every time a packet is received (used to count hops)
 std::ofstream HOPS_FILE;
 uint32_t NUM_NODES;
-void Ipv4L3ProtocolRxTxSink(Ptr<Packet const> pkt, Ptr<Ipv4> ipv4, uint32_t interface) {
+void Ipv4L4ProtocolRxTxSink(Ptr<Packet const> pkt, Ptr<Ipv4> ipv4, uint32_t interface) {
   std::cout << "Packet received" << std::endl;
   Ipv4Address addr = ipv4->GetAddress(interface, 0).GetLocal();
   Header* header = new Ipv4Header;
@@ -98,8 +99,35 @@ void Ipv4L3ProtocolRxTxSink(Ptr<Packet const> pkt, Ptr<Ipv4> ipv4, uint32_t inte
     uint8_t ttl = ((Ipv4Header*) header)->GetTtl();
     uint8_t numHops = defaultTTL - ttl;
     HOPS_FILE << NUM_NODES << '\t' << (int) numHops << std::endl;
-    std::cout << NUM_NODES << '\t' << (int) numHops << std::endl;
+    NS_LOG_DEBUG(std::to_string(NUM_NODES) << "\t" << std::to_string((int) numHops));
   }
+}
+
+/*
+void Ipv6L3ProtocolRxTxSink(Ptr<Packet const> pkt, Ptr<Ipv6> ipv6, uint32_t interface) {
+  std::cout << "Packet received" << std::endl;
+  Ipv6Address addr = ipv6->GetAddress(interface, 0).GetAddress();
+  Header* header = new Ipv6Header;
+  pkt->PeekHeader(*header);
+  if (((Ipv6Header*) header)->GetDestinationAddress() == addr) {//If the packet received is at its destination
+    uint8_t defaultTTL = 255;//set via configuration in CreateNodes
+    uint8_t ttl = ((Ipv6Header*) header)->GetTtl();
+    uint8_t numHops = defaultTTL - ttl;
+    HOPS_FILE << NUM_NODES << '\t' << (int) numHops << std::endl;
+    NS_LOG_DEBUG(std::to_string(NUM_NODES) << "\t" << std::to_string((int) numHops));
+  }
+}
+*/
+/// Callback for receiving a ping
+void UdpReceived(Ptr<Packet const> pkt) {
+  NS_LOG_DEBUG("Packet Received!");
+  Header* header = new Ipv4Header;
+  pkt->PeekHeader(*header);
+  uint8_t defaultTTL = 255;//set via configuration in CreateNodes
+  uint8_t ttl = ((Ipv4Header*) header)->GetTtl();
+  uint8_t numHops = defaultTTL - ttl;
+  HOPS_FILE << NUM_NODES << '\t' << (int) numHops << std::endl;
+  NS_LOG_DEBUG(std::to_string(NUM_NODES) << "\t" << std::to_string((int) numHops));
 }
 
 /// Generate packets for analysis
@@ -174,6 +202,10 @@ private:
   Ipv4InterfaceContainer interfaces;
   /// MeshHelper. Report is not static methods
   MeshHelper mesh;
+
+  ApplicationContainer serverApps;
+
+  ApplicationContainer clientApps;
 private:
   /// Create nodes and setup their mobility
   void CreateNodes ();
@@ -239,10 +271,6 @@ MeshTest::Configure (int argc, char *argv[])
 void
 MeshTest::CreateNodes ()
 { 
-  //Set Default TTL
-  Config::SetDefault("ns3::Ipv4L3Protocol::DefaultTtl", UintegerValue(255));
-  //Attach callback to IPv4 Packets on L3 for packet reception
-  Config::ConnectWithoutContext("NodeList/*/$ns3::Ipv4L3Protocol/Rx", MakeCallback(&Ipv4L3ProtocolRxTxSink));
   /*
    * Create m_ySize*m_xSize stations to form a grid topology
    */
@@ -312,32 +340,58 @@ MeshTest::CreateNodes ()
 void
 MeshTest::InstallInternetStack ()
 {
+  /*
+  OlsrHelper olsr;
+  Ipv4StaticRoutingHelper staticRouting;
+  Ipv4ListRoutingHelper list;
+  list.Add (staticRouting, 0);
+  list.Add (olsr, 10);
+  */
+
   InternetStackHelper internetStack;
+  //internetStack.SetRoutingHelper(list);
   internetStack.Install (nodes);
   Ipv4AddressHelper address;
   address.SetBase ("10.1.1.0", "255.255.255.0");
   interfaces = address.Assign (meshDevices);
-  Ipv4GlobalRoutingHelper::PopulateRoutingTables();
+  
+  
+  CsmaHelper csma;
+  NetDeviceContainer ndc = csma.Install(nodes);
+  Ipv6AddressHelper ipv6;
+  ipv6.SetBase (Ipv6Address ("2001:1::"), Ipv6Prefix (64));
+  Ipv6InterfaceContainer ic = ipv6.Assign (ndc);
+  ic.SetForwarding (1, true);
+  ic.SetDefaultRouteInAllNodes (1); 
+  
 }
 void
 MeshTest::InstallApplication ()
 {
+  Config::Connect("/NodeList/0/ApplicationList/1/$ns3::UdpEchoServer/Rx", MakeCallback(&UdpReceived));
   UdpEchoServerHelper echoServer (9);
-  ApplicationContainer serverApps = echoServer.Install (nodes.Get (0));
+  serverApps = echoServer.Install (nodes.Get (0));
   serverApps.Start (Seconds (0.0));
   serverApps.Stop (Seconds (m_totalTime));
   UdpEchoClientHelper echoClient (interfaces.GetAddress (0), 9);
   echoClient.SetAttribute ("MaxPackets", UintegerValue ((uint32_t)(m_totalTime*(1/m_packetInterval))));
   echoClient.SetAttribute ("Interval", TimeValue (Seconds (m_packetInterval)));
   echoClient.SetAttribute ("PacketSize", UintegerValue (m_packetSize));
-  ApplicationContainer clientApps = echoClient.Install (nodes.Get (m_numNodes-1));
+  clientApps = echoClient.Install (nodes.Get (m_numNodes-1));
   clientApps.Start (Seconds (0.0));
   clientApps.Stop (Seconds (m_totalTime));
 }
 int
 MeshTest::Run ()
 {
+  //Set Default TTL
+  Config::SetDefault("ns3::Ipv4L3Protocol::DefaultTtl", UintegerValue(255));
+  //Attach callback to IPv4 Packets on L3 for packet reception
+  Config::ConnectWithoutContext("NodeList/*/$ns3::Ipv4L4Protocol/Rx", MakeCallback(&Ipv4L4ProtocolRxTxSink));
+  //Config::ConnectWithoutContext("NodeList/*/$ns3::Ipv6L3Protocol/Rx", MakeCallback(&Ipv6L3ProtocolRxTxSink));
+  //Open file to log number of hops for each UDP packet
   HOPS_FILE.open(m_hopsFileName.c_str(), std::ofstream::out | std::ofstream::app);
+
   CreateNodes ();
   InstallInternetStack ();
   InstallApplication ();
@@ -370,6 +424,7 @@ MeshTest::Run ()
   FlowMonitorHelper flowmon;
   Ptr<FlowMonitor> monitor = flowmon.InstallAll();
 
+  /*
   // Set up sockets for sending and receiving packets
   TypeId tid = TypeId::LookupByName ("ns3::UdpSocketFactory");
   Ptr<Socket> recvSink = Socket::CreateSocket (nodes.Get (0), tid);
@@ -391,6 +446,7 @@ MeshTest::Run ()
                        source, m_packetSize, numPackets, interPacketInterval);
   Simulator::Schedule (Seconds (m_totalTime - 10), &GenerateTraffic,
                        source, m_packetSize, numPackets, interPacketInterval);
+  */
 
   Simulator::Run ();
 
@@ -441,8 +497,11 @@ MeshTest::Run ()
       ofs.open ("results.dat", std::ofstream::app);
     }
 
+  //uint16_t packetHopsSum = 0;
+  int count = 0;
   for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator iter = stats.begin (); iter != stats.end (); ++iter)
     {
+      count++;
       uint32_t nodeID      = iter->first;
       uint32_t txPackets   = iter->second.txPackets;
       uint32_t rxPackets   = iter->second.rxPackets;
@@ -450,6 +509,7 @@ MeshTest::Run ()
       uint32_t dropPackets = iter->second.packetsDropped.size ();
       double   delay       = iter->second.delaySum.GetSeconds ();
       uint32_t rxBytes     = iter->second.rxBytes;
+      //uint8_t packetHops   = iter->second.timesForwarded;
 
       txPacketSum   += txPackets;
       rxPacketSum   += rxPackets;
@@ -457,6 +517,7 @@ MeshTest::Run ()
       dropPacketSum += dropPackets;
       delaySum      += delay;
       rxBytesSum    += rxBytes;
+      //packetHopsSum  += packetHops;
 
       ofs << m_id        << " "
           << m_numNodes  << " "
@@ -467,6 +528,7 @@ MeshTest::Run ()
           << dropPackets << " "
           << delay       << " "
           << rxBytes     << "\n";
+          //<< packetHops  << "\n";
     }
 
   ofs.close();
@@ -475,6 +537,7 @@ MeshTest::Run ()
   double avgJitter = ((lostPacketSum * 100) / txPacketSum);
   double avgThroughput = ((rxBytesSum * 8.0) / m_totalTime) / 1024 / 4;
   double avgDelay = (delaySum / rxPacketSum) * 1000;
+  //uint8_t avgPacketHops =  std::ceil((double)packetHopsSum / (double)count);
 
   if (!fileExists("averages.dat"))
     {
@@ -498,11 +561,13 @@ MeshTest::Run ()
   NS_LOG_UNCOND ("dropPacketSum: " << dropPacketSum << " ");
   NS_LOG_UNCOND ("delaySum: "      << delaySum      << " ms");
   NS_LOG_UNCOND ("rxBytesSum: "    << rxBytesSum    << " B\n");
+  //NS_LOG_UNCOND ("packetHopsSum: " << (int) packetHopsSum << "\n");
 
   NS_LOG_UNCOND ("Average PDR: "        << avgPDR        << " ");
   NS_LOG_UNCOND ("Average Jitter: "     << avgJitter     << " ");
   NS_LOG_UNCOND ("Average Throughput: " << avgThroughput << " Mbps");
-  NS_LOG_UNCOND ("Average Delay: "      << avgDelay      << " ms" << "\n");
+  NS_LOG_UNCOND ("Average Delay: "      << avgDelay      << " ms");
+  //NS_LOG_UNCOND ("Average Hops Per Packet: " << (int) avgPacketHops << "\n");
 
   ofs.close();
   HOPS_FILE.close();
