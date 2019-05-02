@@ -393,6 +393,7 @@ MeshTest::Run ()
 
   ofs.close();
 
+  
   double avgPDR = ((rxPacketSum * 100) / txPacketSum); // PDR = Packet Delivery Ratio
   double avgJitter = ((lostPacketSum * 100) / txPacketSum);
   double avgThroughput = ((rxBytesSum * 8.0) / m_totalTime) / 1024 / 4;
@@ -401,7 +402,7 @@ MeshTest::Run ()
   if (!fileExists("averages.dat"))
     {
       ofs.open ("averages.dat");
-      ofs << "experimentID numNodes nodeID txPackets rxPackets lostPackets dropPackets delay rxBytes" << std::endl;
+      ofs << "experimentID avgPDR", "avgJitter", "avgThroughput", "avgDelay" << std::endl;
     }
   else 
     {
