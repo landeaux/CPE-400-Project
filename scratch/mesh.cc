@@ -143,8 +143,7 @@ MeshTest::MeshTest () :
   m_id (0),
   m_xSize (3),
   m_ySize (3),
-  m_numNodes(m_xSize*m_ySize),
-  m_step (100.0),
+  m_step (10.0),
   m_randomStart (0.1),
   m_totalTime (100.0),
   m_packetInterval (0.1),
@@ -176,8 +175,10 @@ MeshTest::Configure (int argc, char *argv[])
   cmd.AddValue ("ascii",   "Enable Ascii traces on interfaces", m_ascii);
   cmd.AddValue ("stack",  "Type of protocol stack. ns3::Dot11sStack by default", m_stack);
   cmd.AddValue ("root", "Mac address of root mesh point in HWMP", m_root);
-
   cmd.Parse (argc, argv);
+
+  m_numNodes = m_xSize * m_ySize;
+
   NS_LOG_DEBUG ("Grid:" << m_xSize << "*" << m_ySize);
   NS_LOG_DEBUG ("Simulation time: " << m_totalTime << " s");
   if (m_ascii)
