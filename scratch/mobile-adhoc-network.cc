@@ -237,7 +237,7 @@ int main (int argc, char *argv[])
                                  "LayoutType", StringValue ("RowFirst"));
 
   // double speed = std::max((int) (distance / 3.0), 1);
-  std::string val("ns3::ConstantRandomVariable[Constant=" + std::to_string(1) + "]");
+  std::string val("ns3::ConstantRandomVariable[Constant=" + std::to_string(distance) + "]");
   mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
                              "Bounds", RectangleValue (Rectangle (0, distance * 2 * 5, 0, distance * std::max((int) std::ceil(numNodes / 5), 1) * 2)),
                              "Speed", StringValue (val));
