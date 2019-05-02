@@ -143,7 +143,7 @@ MeshTest::MeshTest () :
   m_id (0),
   m_xSize (3),
   m_ySize (3),
-  m_step (100.0),
+  m_step (10.0),
   m_randomStart (0.1),
   m_totalTime (100.0),
   m_packetInterval (0.1),
@@ -267,8 +267,6 @@ MeshTest::InstallInternetStack ()
 void
 MeshTest::InstallApplication ()
 {
-  std::cout << "m_numNodes: " << m_numNodes << std::endl; 
-
   UdpEchoServerHelper echoServer (9);
   ApplicationContainer serverApps = echoServer.Install (nodes.Get (0));
   serverApps.Start (Seconds (0.0));
